@@ -298,6 +298,64 @@ def build_close_reminder(now: datetime) -> tuple[str, str, str]:
     return title, body, bro
 
 
+def build_day_end_report(watchlist: list[tuple[str, str]], now: datetime) -> tuple[str, str, str]:
+    title = f"NSE Day-End Wrap ({now.strftime('%d %b, %H:%M IST')})"
+    rows = []
+    for sym, _ in watchlist:
+        try:
+            ch = im.fetch_chart(sym, range_str="1d", interval="5m")
+            meta = ch.get("meta") or {}
+            close_px = float(meta.get("regularMarketPrice") or 0)
+            prev_c = float(meta.get("chartPreviousClose") or meta.get("previousClose") or 0)
+            day_hi = float(meta.get("regularMarketDayHigh") or close_px)
+            day_lo = float(meta.get("regularMarketDayLow") or close_px)
+            chg = ((close_px - prev_c) / prev_c * 100.0) if prev_c else 0.0
+            rows.append({
+                "sym": sym[:-3],
+                "close": close_px,
+                "chg": chg,
+                "hi": day_hi,
+                "lo": day_lo,
+                "range_pct": ((day_hi - day_lo) / day_lo * 100.0) if day_lo else 0.0,
+            })
+        except Exception:
+            continue
+        time.sleep(0.15)
+
+    rows.sort(key=lambda x: x["chg"], reverse=True)
+    greens = [r for r in rows if r["chg"] >= 0]
+    reds = [r for r in rows if r["chg"] < 0]
+
+    lines = [
+        "🏁 <b>NSE ₹500 Challenge — Day-End Wrap</b>",
+        f"🗓 <code>{now.strftime('%a, %d %b %Y • Market Closed')}</code>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+    if greens:
+        lines.append(f"\n🟢 <b>CLOSED GREEN ({len(greens)})</b>")
+        for r in greens:
+            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['close']:.2f}</code>  <b>({r['chg']:+.2f}%)</b>  <i>[range {r['range_pct']:.1f}%]</i>")
+    if reds:
+        lines.append(f"\n🔴 <b>CLOSED RED ({len(reds)})</b>")
+        for r in reds:
+            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['close']:.2f}</code>  ({r['chg']:+.2f}%)  <i>[range {r['range_pct']:.1f}%]</i>")
+    lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+    lines.append("📒 <i>Update today's trade &amp; lesson in challenge_ledger.md.</i>")
+
+    top = rows[0] if rows else None
+    bot = rows[-1] if rows else None
+    top_str = f"<b>{top['sym']}</b> ({top['chg']:+.2f}%, ₹{top['close']:.2f})" if top else "-"
+    bot_str = f"<b>{bot['sym']}</b> ({bot['chg']:+.2f}%, ₹{bot['close']:.2f})" if bot else "-"
+    bro = (
+        f"Market band bhai! 🏁 ({now.strftime('%a %d %b')})\n\n"
+        f"Aaj apni 10 stocks list mein <b>{len(greens)} green</b> aur <b>{len(reds)} red</b> band hue:\n"
+        f"🏆 Best mover: {top_str}\n"
+        f"📉 Weakest: {bot_str}\n\n"
+        "Aaj jo bhi trade liya (ya skip kiya), chat pe aake ledger mein note kar lete hain — phir chill kar, kal fresh dekhenge! 😎"
+    )
+    return title, "\n".join(lines), bro
+
+
 def send_whatsapp_callmebot(title: str, html_body: str) -> bool:
     phone = (os.environ.get("WHATSAPP_PHONE") or "").strip().lstrip("+")
     apikey = (os.environ.get("WHATSAPP_CALLMEBOT_KEY") or "").strip()
@@ -373,7 +431,7 @@ def send_gmail(title: str, html_body: str) -> bool:
 
 def main() -> int:
     p = argparse.ArgumentParser(description="NSE Cloud Morning Brief & Phone Notifier")
-    p.add_argument("--mode", choices=["auto", "premarket", "orb", "close_reminder"], default="auto")
+    p.add_argument("--mode", choices=["auto", "premarket", "orb", "close_reminder", "day_end"], default="auto")
     p.add_argument("--watchlist", default="trader/rotation_watchlist.txt")
     p.add_argument("--now", default=None, help="Pin IST timestamp ('YYYY-MM-DD HH:MM') for testing")
     p.add_argument("--dry-run", action="store_true", help="Print brief without sending notifications")
@@ -393,8 +451,10 @@ def main() -> int:
             mode = "premarket"
         elif hhmm < "14:55":
             mode = "orb"
-        else:
+        elif hhmm < "15:25":
             mode = "close_reminder"
+        else:
+            mode = "day_end"
 
     if mode == "close_reminder":
         title, html_body, bro_body = build_close_reminder(now)
@@ -402,6 +462,8 @@ def main() -> int:
         wl = load_rotation_list(args.watchlist)
         if mode == "premarket":
             title, html_body, bro_body = build_premarket_report(wl, now)
+        elif mode == "day_end":
+            title, html_body, bro_body = build_day_end_report(wl, now)
         else:
             title, html_body, bro_body = build_orb_report(wl, now, pinned=bool(args.now))
 
