@@ -101,25 +101,24 @@ def build_premarket_report(watchlist: list[tuple[str, str]], now: datetime) -> t
             continue
         time.sleep(0.15)
 
-    above.sort(key=lambda x: x["chg"], reverse=True)
-    below.sort(key=lambda x: x["chg"], reverse=True)
+    all_rows = sorted(above + below, key=lambda x: x["chg"], reverse=True)
+    above_set = {r["sym"] for r in above}
+
+    t_lines = [
+        "STOCK        PREV    CHG%   20MA",
+        "---------------------------------",
+    ]
+    for r in all_rows:
+        tag = "UP  " if r["sym"] in above_set else "DOWN"
+        t_lines.append(f"{r['sym']:<10} {r['px']:>6.2f} {r['chg']:>+6.2f}%  {tag}")
 
     lines = [
         "🌅 <b>NSE ₹500 Challenge — Pre-Market</b>",
         f"🗓 <code>{now.strftime('%a, %d %b %Y • %H:%M IST')}</code>",
-        "━━━━━━━━━━━━━━━━━━━━",
+        f"<pre>{html.escape(chr(10).join(t_lines))}</pre>",
+        f"🟢 Above 20MA: <b>{len(above)}</b>  |  🔴 Below 20MA: <b>{len(below)}</b>",
+        "⏳ <i>Next auto-alert at ~09:45 IST (after morning chaos settles).</i>",
     ]
-    if above:
-        lines.append("\n🟢 <b>ABOVE 20-DAY AVERAGE (Stronger Trend)</b>")
-        for r in above:
-            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['px']:.2f}</code>  ({r['chg']:+.2f}%)")
-    if below:
-        lines.append("\n🔴 <b>BELOW 20-DAY AVERAGE (Weaker Trend)</b>")
-        for r in below:
-            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['px']:.2f}</code>  ({r['chg']:+.2f}%)")
-
-    lines.append("\n━━━━━━━━━━━━━━━━━━━━")
-    lines.append("⏳ <i>Next auto-alert at ~09:45 IST (after morning chaos settles).</i>")
 
     # Casual Hinglish bro-talk companion message
     top_names = ", ".join(f"<b>{r['sym']}</b> (<code>₹{r['px']:.0f}</code>)" for r in above[:3]) or "koi nahi"
@@ -198,47 +197,53 @@ def build_orb_report(watchlist: list[tuple[str, str]], now: datetime, or_minutes
 
     lines = [
         "📊 <b>NSE ₹500 Challenge — Post-Chaos Brief</b>",
-        f"🗓 <code>{now.strftime('%a, %d %b %Y • %H:%M IST')}</code>",
-        f"⏱ Opening Range: <code>09:15–{or_end_dt.strftime('%H:%M')} IST</code>",
-        "━━━━━━━━━━━━━━━━━━━━",
+        f"🗓 <code>{now.strftime('%a, %d %b • %H:%M IST')}</code>  |  OR <code>09:15–{or_end_dt.strftime('%H:%M')}</code>",
     ]
 
     if strong_orb:
-        lines.append(f"\n🟢 <b>CLEAN BREAKOUTS — GREEN &amp; HOLDING ({len(strong_orb)})</b>\n")
-        for idx, t in enumerate(strong_orb):
-            num = NUM_EMOJI[idx] if idx < len(NUM_EMOJI) else "•"
-            status_note = " ⚡ <i>Already past 1.5R — don't chase!</i>" if t["already_hit_target"] else ""
-            lines.append(
-                f"{num} <b>{t['sym']}</b>  <code>₹{t['live']:.2f}</code>  <b>({t['chg']:+.2f}%)</b>\n"
-                f"    📈 Broke <code>₹{t['or_hi']:.2f}</code> @ <code>{t['hit_time']}</code>\n"
-                f"    🛑 Stop <code>₹{t['stop']:.2f}</code>  |  🎯 1.5R <code>₹{t['target']:.2f}</code>{status_note}\n"
-            )
+        lines.append(f"\n🟢 <b>CLEAN BREAKOUTS — GREEN ({len(strong_orb)})</b>")
+        t_lines = [
+            "STOCK       LIVE    STOP    1.5R",
+            "----------------------------------",
+        ]
+        any_chased = False
+        for t in strong_orb:
+            star = "*" if t["already_hit_target"] else " "
+            if t["already_hit_target"]:
+                any_chased = True
+            t_lines.append(f"{t['sym']:<10} {t['live']:>6.2f}  {t['stop']:>6.2f}  {t['target']:>6.2f}{star}")
+        lines.append(f"<pre>{html.escape(chr(10).join(t_lines))}</pre>")
+        if any_chased:
+            lines.append("<i>* already past 1.5R target — don't chase</i>")
 
         actionable = [t for t in strong_orb if not t["already_hit_target"]] or strong_orb
         combo = best_500_combo(actionable, budget=500.0)
         if combo:
             total_cost = sum(x["live"] for x in combo)
             combo_str = " + ".join(f"<b>1 {x['sym']}</b> (<code>₹{x['live']:.0f}</code>)" for x in combo)
-            lines.append(f"💰 <b>Top ₹500 Pair Fit:</b> {combo_str} = <code>₹{total_cost:.2f}</code>\n")
+            lines.append(f"💰 <b>Top ₹500 Fit:</b> {combo_str} = <code>₹{total_cost:.2f}</code>")
     else:
-        lines.append("\n🟢 <b>CLEAN BREAKOUTS:</b> None holding green above range yet.\n")
+        lines.append("\n🟢 <b>CLEAN BREAKOUTS:</b> None holding green above range yet.")
 
-    if faded_orb:
-        faded_str = ", ".join(f"<b>{t['sym']}</b> (<code>₹{t['live']:.2f}</code>, {t['chg']:+.1f}%)" for t in faded_orb)
-        lines.append(f"🟡 <b>Broke Out Earlier / Faded ({len(faded_orb)}):</b>\n{faded_str}\n")
+    # Compact status table for all remaining stocks (faded + watching + weak)
+    others_rows = []
+    for t in faded_orb:
+        others_rows.append((t["sym"], t["live"], t["chg"], "FADED"))
+    for s, px, chg, lo, hi in near_breakout:
+        others_rows.append((s, px, chg, f">{hi:.1f}"))
+    for s, px, chg in weak:
+        others_rows.append((s, px, chg, "WEAK"))
+    if others_rows:
+        lines.append("\n📋 <b>OTHER STOCKS</b>")
+        o_lines = [
+            "STOCK       LIVE    CHG%   STATUS",
+            "----------------------------------",
+        ]
+        for s, px, chg, st in others_rows:
+            o_lines.append(f"{s:<10} {px:>6.2f} {chg:>+6.1f}%  {st}")
+        lines.append(f"<pre>{html.escape(chr(10).join(o_lines))}</pre>")
 
-    if near_breakout:
-        lines.append(f"👀 <b>WATCHING NEAR HIGH ({len(near_breakout)})</b>")
-        for s, px, chg, lo, hi in near_breakout:
-            lines.append(f"• <b>{s}</b> <code>₹{px:.2f}</code> ({chg:+.1f}%) → need &gt; <code>₹{hi:.2f}</code>")
-        lines.append("")
-
-    if weak:
-        weak_str = ", ".join(f"{s} ({chg:+.1f}%)" for s, _, chg in weak)
-        lines.append(f"🔴 <b>Weak / Below Range ({len(weak)}):</b> {weak_str}\n")
-
-    lines.append("━━━━━━━━━━━━━━━━━━━━")
-    lines.append("⚠️ <b>Rules:</b> Max 2 stocks ≤ <code>₹500</code> (MIS 1x) • Check Time Machine • Exit by <code>15:10 IST</code>")
+    lines.append("⚠️ <i>MIS 1x • Max 2 ≤ ₹500 • Exit by 15:10 IST</i>")
 
     # Casual Hinglish bro-talk companion message
     all_seen = strong_orb + faded_orb + [{"sym": s, "live": px, "chg": chg} for s, px, chg, _, _ in near_breakout] + [{"sym": s, "live": px, "chg": chg} for s, px, chg in weak]
@@ -326,21 +331,20 @@ def build_day_end_report(watchlist: list[tuple[str, str]], now: datetime) -> tup
     greens = [r for r in rows if r["chg"] >= 0]
     reds = [r for r in rows if r["chg"] < 0]
 
+    t_lines = [
+        "STOCK       CLOSE    CHG%   RNG",
+        "---------------------------------",
+    ]
+    for r in rows:
+        t_lines.append(f"{r['sym']:<10} {r['close']:>6.2f} {r['chg']:>+6.2f}%  {r['range_pct']:>3.1f}%")
+
     lines = [
         "🏁 <b>NSE ₹500 Challenge — Day-End Wrap</b>",
         f"🗓 <code>{now.strftime('%a, %d %b %Y • Market Closed')}</code>",
-        "━━━━━━━━━━━━━━━━━━━━",
+        f"<pre>{html.escape(chr(10).join(t_lines))}</pre>",
+        f"🟢 Green: <b>{len(greens)}</b>  |  🔴 Red: <b>{len(reds)}</b>",
+        "📒 <i>Update today's trade &amp; lesson in challenge_ledger.md.</i>",
     ]
-    if greens:
-        lines.append(f"\n🟢 <b>CLOSED GREEN ({len(greens)})</b>")
-        for r in greens:
-            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['close']:.2f}</code>  <b>({r['chg']:+.2f}%)</b>  <i>[range {r['range_pct']:.1f}%]</i>")
-    if reds:
-        lines.append(f"\n🔴 <b>CLOSED RED ({len(reds)})</b>")
-        for r in reds:
-            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['close']:.2f}</code>  ({r['chg']:+.2f}%)  <i>[range {r['range_pct']:.1f}%]</i>")
-    lines.append("\n━━━━━━━━━━━━━━━━━━━━")
-    lines.append("📒 <i>Update today's trade &amp; lesson in challenge_ledger.md.</i>")
 
     top = rows[0] if rows else None
     bot = rows[-1] if rows else None
