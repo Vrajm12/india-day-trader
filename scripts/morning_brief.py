@@ -3,18 +3,20 @@
 
 Pure Python standard library only. Works even when your laptop is OFF when hosted on GitHub Actions.
 Notification channels (configure any 1 or more via GitHub Repository Secrets):
-  - WhatsApp (CallMeBot): WHATSAPP_PHONE (e.g. 9198XXXXXXXX) + WHATSAPP_CALLMEBOT_KEY
+  - Telegram bot:         TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID (rich HTML formatting)
   - ntfy.sh phone push:   NTFY_TOPIC (e.g. my-secret-nse-alerts-9821)
-  - Telegram bot:         TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID
-  - Gmail email:          GMAIL_USER + GMAIL_APP_PASSWORD + ALERT_TO_EMAIL (optional, defaults to GMAIL_USER)
+  - WhatsApp (CallMeBot): WHATSAPP_PHONE + WHATSAPP_CALLMEBOT_KEY
+  - Gmail email:          GMAIL_USER + GMAIL_APP_PASSWORD + ALERT_TO_EMAIL (optional)
 """
 
 from __future__ import annotations
 
 import argparse
 import email.message
+import html
 import json
 import os
+import re
 import smtplib
 import ssl
 import sys
@@ -29,6 +31,12 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 import india_market as im
+
+NUM_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+
+
+def strip_html(s: str) -> str:
+    return html.unescape(re.sub(r"<[^>]+>", "", s))
 
 
 def load_rotation_list(path: str = "trader/rotation_watchlist.txt") -> list[tuple[str, str]]:
@@ -47,13 +55,36 @@ def load_rotation_list(path: str = "trader/rotation_watchlist.txt") -> list[tupl
     return items
 
 
+def best_500_combo(candidates: list[dict], budget: float = 500.0) -> list[dict]:
+    """Pick up to 2 strongest active breakouts whose 1-share total fits inside budget."""
+    best: list[dict] = []
+    best_score = -1e9
+    # Try pairs first
+    for i in range(len(candidates)):
+        for j in range(i + 1, len(candidates)):
+            a, b = candidates[i], candidates[j]
+            cost = a["live"] + b["live"]
+            if cost <= budget:
+                score = a["chg"] + b["chg"]
+                if score > best_score:
+                    best_score = score
+                    best = [a, b]
+    if best:
+        return best
+    # Fallback: best single stock under budget
+    for c in candidates:
+        if c["live"] <= budget:
+            return [c]
+    return []
+
+
 def build_premarket_report(watchlist: list[tuple[str, str]], now: datetime) -> tuple[str, str]:
-    title = f"NSE Pre-Market Brief ({now.strftime('%d %b %Y, %H:%M IST')})"
-    lines = [f"Rs 500 Rotation Watchlist — Pre-Market ({now.strftime('%a %d %b %Y')})"]
+    title = f"NSE Pre-Market Brief ({now.strftime('%d %b, %H:%M IST')})"
+    above = []
+    below = []
     for sym, _ in watchlist:
         try:
             ch = im.fetch_chart(sym, range_str="1mo", interval="1d")
-            meta = ch.get("meta") or {}
             quotes = ((ch.get("indicators") or {}).get("quote") or [{}])[0]
             closes = [float(c) for c in (quotes.get("close") or []) if c is not None]
             if len(closes) >= 2:
@@ -61,21 +92,44 @@ def build_premarket_report(watchlist: list[tuple[str, str]], now: datetime) -> t
                 prev_c = closes[-2]
                 chg = (last_c - prev_c) / prev_c * 100.0 if prev_c else 0.0
                 ma20 = sum(closes[-20:]) / min(20, len(closes))
-                trend = "ABOVE 20MA" if last_c > ma20 else "below 20MA"
-                lines.append(f"• {sym[:-3]:<10} Rs {last_c:>6.2f} ({chg:+5.2f}%) | {trend}")
-        except Exception as e:
-            lines.append(f"• {sym[:-3]:<10} fetch error: {e}")
+                row = {"sym": sym[:-3], "px": last_c, "chg": chg}
+                if last_c > ma20:
+                    above.append(row)
+                else:
+                    below.append(row)
+        except Exception:
+            continue
         time.sleep(0.15)
-    lines.append("\nNext auto-alert: ~09:45 IST (after 09:15-09:30 opening chaos settles).")
+
+    above.sort(key=lambda x: x["chg"], reverse=True)
+    below.sort(key=lambda x: x["chg"], reverse=True)
+
+    lines = [
+        "🌅 <b>NSE ₹500 Challenge — Pre-Market</b>",
+        f"🗓 <code>{now.strftime('%a, %d %b %Y • %H:%M IST')}</code>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+    if above:
+        lines.append("\n🟢 <b>ABOVE 20-DAY AVERAGE (Stronger Trend)</b>")
+        for r in above:
+            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['px']:.2f}</code>  ({r['chg']:+.2f}%)")
+    if below:
+        lines.append("\n🔴 <b>BELOW 20-DAY AVERAGE (Weaker Trend)</b>")
+        for r in below:
+            lines.append(f"• <b>{r['sym']}</b>  <code>₹{r['px']:.2f}</code>  ({r['chg']:+.2f}%)")
+
+    lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+    lines.append("⏳ <i>Next auto-alert at ~09:45 IST (after morning chaos settles).</i>")
     return title, "\n".join(lines)
 
 
 def build_orb_report(watchlist: list[tuple[str, str]], now: datetime, or_minutes: int = 15, pinned: bool = False) -> tuple[str, str]:
     session_date = now.date().isoformat()
     or_end_dt = datetime.combine(now.date(), im.MARKET_OPEN, tzinfo=im.IST) + timedelta(minutes=or_minutes)
-    title = f"NSE 09:45 ORB Brief ({now.strftime('%d %b, %H:%M IST')})"
+    title = f"NSE ORB Brief ({now.strftime('%d %b, %H:%M IST')})"
 
-    triggered = []
+    strong_orb = []
+    faded_orb = []
     near_breakout = []
     weak = []
 
@@ -106,7 +160,7 @@ def build_orb_report(watchlist: list[tuple[str, str]], now: datetime, or_minutes
                 risk = max(0.05, round(entry - stop, 2))
                 target = round((entry + 1.5 * risk) * 20) / 20.0
                 hit_time = (hit_bar["dt"] + timedelta(minutes=5)).strftime("%H:%M")
-                triggered.append({
+                item = {
                     "sym": sym[:-3],
                     "live": live_px,
                     "chg": chg_pct,
@@ -116,61 +170,88 @@ def build_orb_report(watchlist: list[tuple[str, str]], now: datetime, or_minutes
                     "target": target,
                     "or_lo": or_lo,
                     "or_hi": or_hi,
-                })
-            elif live_px >= or_hi * 0.995:
+                    "already_hit_target": live_px >= target,
+                }
+                if live_px > or_hi and chg_pct >= 0:
+                    strong_orb.append(item)
+                else:
+                    faded_orb.append(item)
+            elif live_px >= or_hi * 0.994:
                 near_breakout.append((sym[:-3], live_px, chg_pct, or_lo, or_hi))
             else:
-                weak.append((sym[:-3], live_px, chg_pct, or_lo, or_hi))
+                weak.append((sym[:-3], live_px, chg_pct))
         except Exception:
             continue
         time.sleep(0.15)
 
-    lines = [f"Rs 500 Challenge — Post-Chaos Scan ({now.strftime('%d %b %Y, %H:%M IST')})"]
-    lines.append(f"Opening Range: 09:15-{or_end_dt.strftime('%H:%M')} IST | Ready for 09:50 IST review\n")
+    strong_orb.sort(key=lambda x: x["chg"], reverse=True)
+    faded_orb.sort(key=lambda x: x["chg"], reverse=True)
 
-    if triggered:
-        triggered.sort(key=lambda x: x["chg"], reverse=True)
-        lines.append(f"TRIGGERED ORB ({len(triggered)}):")
-        for t in triggered:
+    lines = [
+        "📊 <b>NSE ₹500 Challenge — Post-Chaos Brief</b>",
+        f"🗓 <code>{now.strftime('%a, %d %b %Y • %H:%M IST')}</code>",
+        f"⏱ Opening Range: <code>09:15–{or_end_dt.strftime('%H:%M')} IST</code>",
+        "━━━━━━━━━━━━━━━━━━━━",
+    ]
+
+    if strong_orb:
+        lines.append(f"\n🟢 <b>CLEAN BREAKOUTS — GREEN &amp; HOLDING ({len(strong_orb)})</b>\n")
+        for idx, t in enumerate(strong_orb):
+            num = NUM_EMOJI[idx] if idx < len(NUM_EMOJI) else "•"
+            status_note = " ⚡ <i>Already past 1.5R — don't chase!</i>" if t["already_hit_target"] else ""
             lines.append(
-                f"• {t['sym']} Rs {t['live']:.2f} ({t['chg']:+.2f}%) | broke {t['or_hi']:.2f} @ {t['hit_time']}"
-                f"\n  Plan preview: Stop Rs {t['stop']:.2f} | 1.5R Target Rs {t['target']:.2f}"
+                f"{num} <b>{t['sym']}</b>  <code>₹{t['live']:.2f}</code>  <b>({t['chg']:+.2f}%)</b>\n"
+                f"    📈 Broke <code>₹{t['or_hi']:.2f}</code> @ <code>{t['hit_time']}</code>\n"
+                f"    🛑 Stop <code>₹{t['stop']:.2f}</code>  |  🎯 1.5R <code>₹{t['target']:.2f}</code>{status_note}\n"
             )
+
+        actionable = [t for t in strong_orb if not t["already_hit_target"]] or strong_orb
+        combo = best_500_combo(actionable, budget=500.0)
+        if combo:
+            total_cost = sum(x["live"] for x in combo)
+            combo_str = " + ".join(f"<b>1 {x['sym']}</b> (<code>₹{x['live']:.0f}</code>)" for x in combo)
+            lines.append(f"💰 <b>Top ₹500 Pair Fit:</b> {combo_str} = <code>₹{total_cost:.2f}</code>\n")
     else:
-        lines.append("TRIGGERED ORB: None yet.")
+        lines.append("\n🟢 <b>CLEAN BREAKOUTS:</b> None holding green above range yet.\n")
+
+    if faded_orb:
+        faded_str = ", ".join(f"<b>{t['sym']}</b> (<code>₹{t['live']:.2f}</code>, {t['chg']:+.1f}%)" for t in faded_orb)
+        lines.append(f"🟡 <b>Broke Out Earlier / Faded ({len(faded_orb)}):</b>\n{faded_str}\n")
 
     if near_breakout:
-        lines.append(f"\nWATCHING NEAR RANGE HIGH ({len(near_breakout)}):")
+        lines.append(f"👀 <b>WATCHING NEAR HIGH ({len(near_breakout)})</b>")
         for s, px, chg, lo, hi in near_breakout:
-            lines.append(f"• {s} Rs {px:.2f} ({chg:+.2f}%) | need > Rs {hi:.2f} (OR {lo:.2f}-{hi:.2f})")
+            lines.append(f"• <b>{s}</b> <code>₹{px:.2f}</code> ({chg:+.1f}%) → need &gt; <code>₹{hi:.2f}</code>")
+        lines.append("")
 
     if weak:
-        lines.append(f"\nBELOW RANGE ({len(weak)}):")
-        lines.append("  " + ", ".join(f"{s} ({chg:+.1f}%)" for s, _, chg, _, _ in weak))
+        weak_str = ", ".join(f"{s} ({chg:+.1f}%)" for s, _, chg in weak)
+        lines.append(f"🔴 <b>Weak / Below Range ({len(weak)}):</b> {weak_str}\n")
 
-    lines.append("\nRules: Pick max 2 stocks (total <= Rs 500, MIS 1x), check Time Machine first, flat by 15:10 IST.")
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("⚠️ <b>Rules:</b> Max 2 stocks ≤ <code>₹500</code> (MIS 1x) • Check Time Machine • Exit by <code>15:10 IST</code>")
     return title, "\n".join(lines)
 
 
 def build_close_reminder(now: datetime) -> tuple[str, str]:
     title = f"NSE Square-Off Reminder ({now.strftime('%H:%M IST')})"
     body = (
-        f"It is {now.strftime('%H:%M IST')}.\n\n"
-        "Check Paytm Money Positions RIGHT NOW:\n"
-        "• Square off ANY open Intraday (MIS) position before 15:10 IST.\n"
-        "• Avoid the Rs 59 (Rs 50 + GST) auto-square-off penalty at 15:15-15:20 IST.\n"
-        "• Log today's net result in trader/challenge_ledger.md."
+        f"🚨 <b>MIS SQUARE-OFF REMINDER — <code>{now.strftime('%H:%M IST')}</code></b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📱 Open <b>Paytm Money → Positions</b> RIGHT NOW:\n\n"
+        "• Square off ANY open <b>Intraday (MIS)</b> position before <code>15:10 IST</code>.\n"
+        "• Avoid the <code>₹59</code> (₹50 + GST) broker auto-square-off penalty at <code>15:15</code>.\n"
+        "• Log today's net P&amp;L in <code>challenge_ledger.md</code>."
     )
     return title, body
 
 
-def send_whatsapp_callmebot(title: str, body: str) -> bool:
+def send_whatsapp_callmebot(title: str, html_body: str) -> bool:
     phone = (os.environ.get("WHATSAPP_PHONE") or "").strip().lstrip("+")
     apikey = (os.environ.get("WHATSAPP_CALLMEBOT_KEY") or "").strip()
     if not phone or not apikey:
         return False
-    # Keep WhatsApp message crisp and under CallMeBot URL length limits
-    text = f"*{title}*\n\n{body}"
+    text = strip_html(html_body)
     if len(text) > 1500:
         text = text[:1490] + "\n..."
     params = urllib.parse.urlencode({"phone": phone, "text": text, "apikey": apikey})
@@ -181,14 +262,14 @@ def send_whatsapp_callmebot(title: str, body: str) -> bool:
     return True
 
 
-def send_ntfy(title: str, body: str) -> bool:
+def send_ntfy(title: str, html_body: str) -> bool:
     topic = (os.environ.get("NTFY_TOPIC") or "").strip()
     if not topic:
         return False
     url = f"https://ntfy.sh/{urllib.parse.quote(topic)}"
     req = urllib.request.Request(
         url,
-        data=body.encode("utf-8"),
+        data=strip_html(html_body).encode("utf-8"),
         headers={"Title": title, "Priority": "high", "Tags": "chart_with_upwards_trend"},
         method="POST",
     )
@@ -197,13 +278,18 @@ def send_ntfy(title: str, body: str) -> bool:
     return True
 
 
-def send_telegram(title: str, body: str) -> bool:
+def send_telegram(title: str, html_body: str) -> bool:
     token = (os.environ.get("TELEGRAM_BOT_TOKEN") or "").strip()
     chat_id = (os.environ.get("TELEGRAM_CHAT_ID") or "").strip()
     if not token or not chat_id:
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = json.dumps({"chat_id": chat_id, "text": f"{title}\n\n{body}"}).encode("utf-8")
+    payload = json.dumps({
+        "chat_id": chat_id,
+        "text": html_body,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True,
+    }).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
@@ -214,7 +300,7 @@ def send_telegram(title: str, body: str) -> bool:
     return True
 
 
-def send_gmail(title: str, body: str) -> bool:
+def send_gmail(title: str, html_body: str) -> bool:
     user = (os.environ.get("GMAIL_USER") or "").strip()
     app_pw = (os.environ.get("GMAIL_APP_PASSWORD") or "").strip()
     to_addr = (os.environ.get("ALERT_TO_EMAIL") or user).strip()
@@ -224,7 +310,7 @@ def send_gmail(title: str, body: str) -> bool:
     msg["Subject"] = title
     msg["From"] = user
     msg["To"] = to_addr
-    msg.set_content(body)
+    msg.set_content(strip_html(html_body))
     ctx = ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx, timeout=20) as srv:
         srv.login(user, app_pw)
@@ -259,15 +345,15 @@ def main() -> int:
             mode = "close_reminder"
 
     if mode == "close_reminder":
-        title, body = build_close_reminder(now)
+        title, html_body = build_close_reminder(now)
     else:
         wl = load_rotation_list(args.watchlist)
         if mode == "premarket":
-            title, body = build_premarket_report(wl, now)
+            title, html_body = build_premarket_report(wl, now)
         else:
-            title, body = build_orb_report(wl, now, pinned=bool(args.now))
+            title, html_body = build_orb_report(wl, now, pinned=bool(args.now))
 
-    print(f"=== {title} ===\n{body}\n")
+    print(strip_html(html_body) + "\n")
 
     if args.dry_run:
         print("(dry-run: notifications skipped)")
@@ -277,7 +363,7 @@ def main() -> int:
     had_error = False
     for fn in (send_whatsapp_callmebot, send_ntfy, send_telegram, send_gmail):
         try:
-            if fn(title, body):
+            if fn(title, html_body):
                 sent_any = True
         except Exception as e:
             had_error = True
