@@ -19,6 +19,7 @@ import smtplib
 import ssl
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
@@ -204,8 +205,12 @@ def send_telegram(title: str, body: str) -> bool:
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = json.dumps({"chat_id": chat_id, "text": f"{title}\n\n{body}"}).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=15) as r:
-        print(f"Telegram sent -> HTTP {r.status}")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            print(f"Telegram sent -> HTTP {r.status}")
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Telegram HTTP {e.code}: {detail}") from e
     return True
 
 
@@ -269,13 +274,17 @@ def main() -> int:
         return 0
 
     sent_any = False
+    had_error = False
     for fn in (send_whatsapp_callmebot, send_ntfy, send_telegram, send_gmail):
         try:
             if fn(title, body):
                 sent_any = True
         except Exception as e:
+            had_error = True
             print(f"Notifier error ({fn.__name__}): {e}", file=sys.stderr)
 
+    if had_error and not sent_any:
+        return 1
     if not sent_any:
         print("No notification secrets configured (set WHATSAPP_PHONE+WHATSAPP_CALLMEBOT_KEY, NTFY_TOPIC, TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID, or GMAIL_USER+GMAIL_APP_PASSWORD).")
     return 0
