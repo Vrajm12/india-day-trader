@@ -1,0 +1,12 @@
+# Rs 500 -> Rs 1,000 Challenge: 10-Stock Multi-Sector Liquid NSE Rotation List
+# Price range: ~Rs 35 to Rs 370 (fits 1-3 shares inside Rs 500 at 1x, zero leverage)
+SUZLON.NS|Suzlon Energy Ltd (Renewables)
+IOC.NS|Indian Oil Corporation Ltd (Oil & Gas PSU)
+PNB.NS|Punjab National Bank (PSU Bank)
+TATASTEEL.NS|Tata Steel Ltd (Metals)
+ONGC.NS|Oil & Natural Gas Corporation Ltd (Energy PSU)
+VEDL.NS|Vedanta Ltd (Metals & Mining)
+POWERGRID.NS|Power Grid Corporation of India Ltd (Utilities PSU)
+BANKBARODA.NS|Bank of Baroda (PSU Bank)
+ITC.NS|ITC Ltd (FMCG)
+ETERNAL.NS|Eternal Ltd (Consumer Tech)

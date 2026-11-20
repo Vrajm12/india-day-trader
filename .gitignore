@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.env
+trader/prices.json
+trader/watchlist.json
+trader/state/
+trader/universe.txt
+trader/nifty500.txt

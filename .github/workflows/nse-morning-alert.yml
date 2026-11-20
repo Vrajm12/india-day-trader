@@ -1,0 +1,48 @@
+name: NSE Rs 500 Rotation Phone Alerts
+
+on:
+  schedule:
+    # 09:00 IST (03:30 UTC) Mon-Fri — Pre-market snapshot
+    - cron: '30 3 * * 1-5'
+    # 09:40 IST (04:10 UTC) Mon-Fri — Post-chaos ORB brief (arrives ~09:42-09:48 IST for 09:50 entry decision)
+    - cron: '10 4 * * 1-5'
+    # 15:05 IST (09:35 UTC) Mon-Fri — MIS square-off reminder (before 15:10 flat-by / 15:15 penalty)
+    - cron: '35 9 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Brief mode to run right now'
+        required: true
+        default: 'orb'
+        type: choice
+        options:
+          - auto
+          - premarket
+          - orb
+          - close_reminder
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run NSE Morning Brief & Notify Phone
+        env:
+          WHATSAPP_PHONE: ${{ secrets.WHATSAPP_PHONE }}
+          WHATSAPP_CALLMEBOT_KEY: ${{ secrets.WHATSAPP_CALLMEBOT_KEY }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
+        run: |
+          MODE="${{ github.event.inputs.mode || 'auto' }}"
+          python3 scripts/morning_brief.py --mode "$MODE"
