@@ -120,7 +120,16 @@ def build_premarket_report(watchlist: list[tuple[str, str]], now: datetime) -> t
 
     lines.append("\n━━━━━━━━━━━━━━━━━━━━")
     lines.append("⏳ <i>Next auto-alert at ~09:45 IST (after morning chaos settles).</i>")
-    return title, "\n".join(lines)
+
+    # Casual Hinglish bro-talk companion message
+    top_names = ", ".join(f"<b>{r['sym']}</b> (<code>₹{r['px']:.0f}</code>)" for r in above[:3]) or "koi nahi"
+    bro = (
+        f"Yo Veeraj! ☕ Good morning ({now.strftime('%d %b')})\n\n"
+        f"Aaj subah apni 10 stocks list mein <b>{len(above)}</b> up-trend mein hain aur <b>{len(below)}</b> neeche.\n"
+        f"Sabse strong abhi: {top_names}\n\n"
+        "Abhi <code>09:15–09:45</code> wala subah ka chaos dekhne de — <code>09:45</code> pe main tujhe exact setups aur Entry / Stop / Target bhejunga. Tab aaja chat pe! 👋"
+    )
+    return title, "\n".join(lines), bro
 
 
 def build_orb_report(watchlist: list[tuple[str, str]], now: datetime, or_minutes: int = 15, pinned: bool = False) -> tuple[str, str]:
@@ -230,10 +239,48 @@ def build_orb_report(watchlist: list[tuple[str, str]], now: datetime, or_minutes
 
     lines.append("━━━━━━━━━━━━━━━━━━━━")
     lines.append("⚠️ <b>Rules:</b> Max 2 stocks ≤ <code>₹500</code> (MIS 1x) • Check Time Machine • Exit by <code>15:10 IST</code>")
-    return title, "\n".join(lines)
+
+    # Casual Hinglish bro-talk companion message
+    all_seen = strong_orb + faded_orb + [{"sym": s, "live": px, "chg": chg} for s, px, chg, _, _ in near_breakout] + [{"sym": s, "live": px, "chg": chg} for s, px, chg in weak]
+    greens = [x for x in all_seen if x["chg"] >= 0]
+    reds = [x for x in all_seen if x["chg"] < 0]
+    greens.sort(key=lambda x: x["chg"], reverse=True)
+    reds.sort(key=lambda x: x["chg"])
+
+    bro_lines = [
+        f"Yo Veeraj! 👋 Subah ka chaos settle ho gaya ({now.strftime('%H:%M IST')}) — chal aaj ka scene dekh:\n",
+        "📋 <b>Aaj ki 10 stocks list:</b>",
+        "🟢 Green: " + (", ".join(f"{x['sym']} ({x['chg']:+.1f}%)" for x in greens) or "koi nahi"),
+        "🔴 Red: " + (", ".join(f"{x['sym']} ({x['chg']:+.1f}%)" for x in reds) or "koi nahi") + "\n",
+    ]
+
+    if strong_orb:
+        actionable = [t for t in strong_orb if not t["already_hit_target"]] or strong_orb
+        picks = best_500_combo(actionable, budget=500.0)
+        if picks:
+            tot = sum(p["live"] for p in picks)
+            bro_lines.append(f"🎯 <b>₹500 ke hisaab se ye {len(picks)} setups sabse clean lag rahe hain (1x MIS):</b>\n")
+            for idx, p in enumerate(picks):
+                num = NUM_EMOJI[idx]
+                chase = "\n   ⚡ <i>Note: Ye already 1.5R target paar kar gaya, chase mat karna!</i>" if p["already_hit_target"] else ""
+                bro_lines.append(
+                    f"{num} <b>{p['sym']}</b> (abhi <code>₹{p['live']:.2f}</code>, {p['chg']:+.2f}%)\n"
+                    f"   • Entry: <code>~₹{p['entry']:.2f}</code> ({p['hit_time']} pe breakout)\n"
+                    f"   • Stop-loss: <code>₹{p['stop']:.2f}</code>\n"
+                    f"   • Target (1.5R): <code>₹{p['target']:.2f}</code>{chase}\n"
+                )
+            bro_lines.append(f"💵 Dono ka total: <code>₹{tot:.2f}</code> (₹500 ke andar fit!)\n")
+        else:
+            bro_lines.append("🎯 Breakout toh aaya hai par ₹500 combo check karna padega.\n")
+    else:
+        bro_lines.append("😴 Abhi tak koi clean green breakout nahi aaya — jabardasti trade nahi lena, thoda wait karte hain!\n")
+
+    bro_lines.append("⚠️ <i>Sirf data &amp; math hai — order lene se pehle Time Machine check zaroor karenge.</i>")
+    bro_lines.append("💬 <b>Aaja Antigravity chat pe — dono ko check karke 9:50 pe final call lete hain!</b> 🚀")
+    return title, "\n".join(lines), "\n".join(bro_lines)
 
 
-def build_close_reminder(now: datetime) -> tuple[str, str]:
+def build_close_reminder(now: datetime) -> tuple[str, str, str]:
     title = f"NSE Square-Off Reminder ({now.strftime('%H:%M IST')})"
     body = (
         f"🚨 <b>MIS SQUARE-OFF REMINDER — <code>{now.strftime('%H:%M IST')}</code></b>\n"
@@ -243,7 +290,12 @@ def build_close_reminder(now: datetime) -> tuple[str, str]:
         "• Avoid the <code>₹59</code> (₹50 + GST) broker auto-square-off penalty at <code>15:15</code>.\n"
         "• Log today's net P&amp;L in <code>challenge_ledger.md</code>."
     )
-    return title, body
+    bro = (
+        f"Oye bhai! ⏰ <code>{now.strftime('%H:%M IST')}</code> baj gaye!\n\n"
+        "Paytm Money khol ke check kar — koi bhi Intraday (MIS) position open ho toh <b>3:10 PM se pehle exit maar de</b>, warna ₹59 penalty lag jaayegi.\n\n"
+        "💬 Exit karke chat pe aaja — aaj ka profit/loss ledger mein update karte hain!"
+    )
+    return title, body, bro
 
 
 def send_whatsapp_callmebot(title: str, html_body: str) -> bool:
@@ -345,15 +397,15 @@ def main() -> int:
             mode = "close_reminder"
 
     if mode == "close_reminder":
-        title, html_body = build_close_reminder(now)
+        title, html_body, bro_body = build_close_reminder(now)
     else:
         wl = load_rotation_list(args.watchlist)
         if mode == "premarket":
-            title, html_body = build_premarket_report(wl, now)
+            title, html_body, bro_body = build_premarket_report(wl, now)
         else:
-            title, html_body = build_orb_report(wl, now, pinned=bool(args.now))
+            title, html_body, bro_body = build_orb_report(wl, now, pinned=bool(args.now))
 
-    print(strip_html(html_body) + "\n")
+    print(strip_html(html_body) + "\n---\n" + strip_html(bro_body) + "\n")
 
     if args.dry_run:
         print("(dry-run: notifications skipped)")
@@ -365,6 +417,10 @@ def main() -> int:
         try:
             if fn(title, html_body):
                 sent_any = True
+                # Also send casual Hinglish bro-talk follow-up on Telegram
+                if fn is send_telegram and bro_body:
+                    time.sleep(0.5)
+                    send_telegram(title, bro_body)
         except Exception as e:
             had_error = True
             print(f"Notifier error ({fn.__name__}): {e}", file=sys.stderr)
