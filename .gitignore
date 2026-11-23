@@ -6,3 +6,5 @@ trader/watchlist.json
 trader/state/
 trader/universe.txt
 trader/nifty500.txt
+trader/challenge_ledger.md
+trader/portfolio.json

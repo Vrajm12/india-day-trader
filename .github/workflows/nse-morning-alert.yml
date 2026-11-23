@@ -2,14 +2,15 @@ name: NSE Rs 500 Rotation Phone Alerts
 
 on:
   schedule:
-    # 09:00 IST (03:30 UTC) Mon-Fri — Pre-market snapshot
-    - cron: '30 3 * * 1-5'
-    # 09:40 IST (04:10 UTC) Mon-Fri — Post-chaos ORB brief (arrives ~09:42-09:48 IST for 09:50 entry decision)
-    - cron: '10 4 * * 1-5'
-    # 15:05 IST (09:35 UTC) Mon-Fri — MIS square-off reminder (before 15:10 flat-by / 15:15 penalty)
-    - cron: '35 9 * * 1-5'
-    # 15:35 IST (10:05 UTC) Mon-Fri — Post-close Day-End Wrap across all 10 rotation stocks
-    - cron: '5 10 * * 1-5'
+    # Off-peak minute offsets so GitHub's scheduler doesn't drop peak :00/:05/:10/:30 buckets
+    # 08:57 IST (03:27 UTC) Mon-Fri — Pre-market snapshot
+    - cron: '27 3 * * 1-5'
+    # 09:42 IST (04:12 UTC) Mon-Fri — Post-chaos ORB brief (for 09:50 entry decision)
+    - cron: '12 4 * * 1-5'
+    # 15:03 IST (09:33 UTC) Mon-Fri — MIS square-off reminder (before 15:10 flat-by / 15:15 penalty)
+    - cron: '33 9 * * 1-5'
+    # 15:37 IST (10:07 UTC) Mon-Fri — Post-close Day-End Wrap across all 10 rotation stocks
+    - cron: '7 10 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:
@@ -47,5 +48,16 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
         run: |
-          MODE="${{ github.event.inputs.mode || 'auto' }}"
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            case "${{ github.event.schedule }}" in
+              '27 3 * * 1-5') MODE="premarket" ;;
+              '12 4 * * 1-5') MODE="orb" ;;
+              '33 9 * * 1-5') MODE="close_reminder" ;;
+              '7 10 * * 1-5') MODE="day_end" ;;
+              *) MODE="auto" ;;
+            esac
+          else
+            MODE="${{ github.event.inputs.mode || 'auto' }}"
+          fi
+          echo "Resolved mode: $MODE (event=${{ github.event_name }}, schedule=${{ github.event.schedule }})"
           python3 scripts/morning_brief.py --mode "$MODE"
