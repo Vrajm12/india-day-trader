@@ -433,6 +433,14 @@ def send_gmail(title: str, html_body: str) -> bool:
     return True
 
 
+ALLOWED_WINDOWS_IST = {
+    "premarket": ("08:30", "09:20"),
+    "orb": ("09:35", "11:00"),
+    "close_reminder": ("14:55", "15:25"),
+    "day_end": ("15:30", "17:00"),
+}
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="NSE Cloud Morning Brief & Phone Notifier")
     p.add_argument("--mode", choices=["auto", "premarket", "orb", "close_reminder", "day_end"], default="auto")
@@ -440,6 +448,7 @@ def main() -> int:
     p.add_argument("--now", default=None, help="Pin IST timestamp ('YYYY-MM-DD HH:MM') for testing")
     p.add_argument("--dry-run", action="store_true", help="Print brief without sending notifications")
     p.add_argument("--force-holiday", action="store_true", help="Run even on NSE holidays/weekends")
+    p.add_argument("--enforce-window", action="store_true", help="Skip if fired outside allowed IST window (protects against delayed cloud crons)")
     args = p.parse_args()
 
     now = im.now_ist(args.now)
@@ -459,6 +468,13 @@ def main() -> int:
             mode = "close_reminder"
         else:
             mode = "day_end"
+
+    if args.enforce_window and mode in ALLOWED_WINDOWS_IST:
+        hhmm = now.strftime("%H:%M")
+        win_start, win_end = ALLOWED_WINDOWS_IST[mode]
+        if not (win_start <= hhmm <= win_end):
+            print(f"Skipping stale delayed run: {mode} fired at {hhmm} IST (allowed window {win_start}-{win_end} IST).")
+            return 0
 
     if mode == "close_reminder":
         title, html_body, bro_body = build_close_reminder(now)

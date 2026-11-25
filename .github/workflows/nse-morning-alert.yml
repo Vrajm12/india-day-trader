@@ -56,8 +56,10 @@ jobs:
               '7 10 * * 1-5') MODE="day_end" ;;
               *) MODE="auto" ;;
             esac
+            EXTRA_FLAG="--enforce-window"
           else
             MODE="${{ github.event.inputs.mode || 'auto' }}"
+            EXTRA_FLAG=""
           fi
           echo "Resolved mode: $MODE (event=${{ github.event_name }}, schedule=${{ github.event.schedule }})"
-          python3 scripts/morning_brief.py --mode "$MODE"
+          python3 scripts/morning_brief.py --mode "$MODE" $EXTRA_FLAG
