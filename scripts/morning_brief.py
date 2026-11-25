@@ -405,13 +405,23 @@ def send_telegram(title: str, html_body: str) -> bool:
         "disable_web_page_preview": True,
     }).encode("utf-8")
     req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            print(f"Telegram sent -> HTTP {r.status}")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"Telegram HTTP {e.code}: {detail}") from e
-    return True
+    last_err = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                print(f"Telegram sent -> HTTP {r.status}")
+                return True
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")
+            if e.code >= 500 or e.code == 429:
+                last_err = RuntimeError(f"Telegram HTTP {e.code}: {detail}")
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            raise RuntimeError(f"Telegram HTTP {e.code}: {detail}") from e
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+            time.sleep(2.0 * (attempt + 1))
+    raise last_err
 
 
 def send_gmail(title: str, html_body: str) -> bool:
