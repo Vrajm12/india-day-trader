@@ -1,22 +1,16 @@
 name: NSE Rs 500 Rotation Phone Alerts
 
+# NOTE: GitHub's built-in `schedule:` cron was removed because GitHub Actions
+# delayed scheduled runs by 10+ hours (firing 15:03 IST alerts at 01:47 AM IST).
+# Trigger this workflow on exact IST minutes via free cron-job.org (see CRON_SETUP.md)
+# or manually from the GitHub Actions tab.
 on:
-  schedule:
-    # Off-peak minute offsets so GitHub's scheduler doesn't drop peak :00/:05/:10/:30 buckets
-    # 08:57 IST (03:27 UTC) Mon-Fri — Pre-market snapshot
-    - cron: '27 3 * * 1-5'
-    # 09:42 IST (04:12 UTC) Mon-Fri — Post-chaos ORB brief (for 09:50 entry decision)
-    - cron: '12 4 * * 1-5'
-    # 15:03 IST (09:33 UTC) Mon-Fri — MIS square-off reminder (before 15:10 flat-by / 15:15 penalty)
-    - cron: '33 9 * * 1-5'
-    # 15:37 IST (10:07 UTC) Mon-Fri — Post-close Day-End Wrap across all 10 rotation stocks
-    - cron: '7 10 * * 1-5'
   workflow_dispatch:
     inputs:
       mode:
         description: 'Brief mode to run right now'
         required: true
-        default: 'orb'
+        default: 'auto'
         type: choice
         options:
           - auto
@@ -48,18 +42,6 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           ALERT_TO_EMAIL: ${{ secrets.ALERT_TO_EMAIL }}
         run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            case "${{ github.event.schedule }}" in
-              '27 3 * * 1-5') MODE="premarket" ;;
-              '12 4 * * 1-5') MODE="orb" ;;
-              '33 9 * * 1-5') MODE="close_reminder" ;;
-              '7 10 * * 1-5') MODE="day_end" ;;
-              *) MODE="auto" ;;
-            esac
-            EXTRA_FLAG="--enforce-window"
-          else
-            MODE="${{ github.event.inputs.mode || 'auto' }}"
-            EXTRA_FLAG=""
-          fi
-          echo "Resolved mode: $MODE (event=${{ github.event_name }}, schedule=${{ github.event.schedule }})"
-          python3 scripts/morning_brief.py --mode "$MODE" $EXTRA_FLAG
+          MODE="${{ github.event.inputs.mode || 'auto' }}"
+          echo "Running mode: $MODE"
+          python3 scripts/morning_brief.py --mode "$MODE"
